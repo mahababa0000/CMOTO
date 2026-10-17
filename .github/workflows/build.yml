@@ -1,0 +1,522 @@
+name: Auto-Generate RepairShopPOS APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Entire Android Project & Source Code
+        run: |
+          mkdir -p app/src/main/java/com/example/repairshoppos
+
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "RepairShopPOS"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.example.repairshoppos"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.example.repairshoppos"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+              buildFeatures {
+                  compose = true
+              }
+              composeOptions {
+                  kotlinCompilerExtensionVersion = "1.5.8"
+              }
+              packaging {
+                  resources {
+                      excludes += "/META-INF/{AL2.0,LGPL2.1}"
+                      excludes += "META-INF/DEPENDENCIES"
+                      excludes += "META-INF/LICENSE*"
+                      excludes += "META-INF/NOTICE*"
+                  }
+              }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.activity:activity-compose:1.8.2")
+              implementation(platform("androidx.compose:compose-bom:2024.02.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-extended")
+              implementation("org.apache.poi:poi:5.2.5")
+              implementation("org.apache.poi:poi-ooxml:5.2.5")
+              implementation("com.google.code.gson:gson:2.10.1")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.BLUETOOTH" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+              <application
+                  android:allowBackup="true"
+                  android:label="Repair Shop POS"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/example/repairshoppos/MainActivity.kt
+          package com.example.repairshoppos
+
+          import android.Manifest
+          import android.annotation.SuppressLint
+          import android.bluetooth.BluetoothAdapter
+          import android.bluetooth.BluetoothDevice
+          import android.bluetooth.BluetoothManager
+          import android.content.Context
+          import android.content.pm.PackageManager
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Environment
+          import android.widget.Toast
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.compose.setContent
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.grid.GridCells
+          import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+          import androidx.compose.foundation.lazy.grid.items
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.text.KeyboardOptions
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.*
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.core.content.ContextCompat
+          import com.google.gson.Gson
+          import com.google.gson.reflect.TypeToken
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+          import org.apache.poi.poifs.crypt.EncryptionInfo
+          import org.apache.poi.poifs.crypt.EncryptionMode
+          import org.apache.poi.poifs.filesystem.POIFSFileSystem
+          import org.apache.poi.ss.usermodel.WorkbookFactory
+          import org.apache.poi.xssf.usermodel.XSSFWorkbook
+          import java.io.File
+          import java.io.FileInputStream
+          import java.io.FileOutputStream
+          import java.io.OutputStream
+          import java.text.SimpleDateFormat
+          import java.util.*
+
+          data class Product(val id: String = UUID.randomUUID().toString(), val name: String, val price: Double)
+          data class CartItem(val product: Product, var quantity: Int)
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  System.setProperty("org.apache.poi.javax.xml.stream.XMLInputFactory", "com.sun.xml.stream.ZephyrParserFactory")
+                  System.setProperty("org.apache.poi.javax.xml.stream.XMLOutputFactory", "com.sun.xml.stream.ZephyrWriterFactory")
+                  System.setProperty("org.apache.poi.javax.xml.stream.XMLEventFactory", "com.sun.xml.stream.events.ZephyrEventFactory")
+                  setContent {
+                      MaterialTheme(
+                          colorScheme = lightColorScheme(
+                              primary = Color(0xFF1565C0),
+                              secondary = Color(0xFF00897B),
+                              background = Color(0xFFF5F7FA)
+                          )
+                      ) { RepairPOSApp() }
+                  }
+              }
+          }
+
+          object ProductRepository {
+              private const val PREFS_NAME = "repair_pos_prefs"
+              private const val KEY_PRODUCTS = "products_list"
+              fun loadProducts(context: Context): List<Product> {
+                  val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                  val json = prefs.getString(KEY_PRODUCTS, null) ?: return listOf(
+                      Product(name = "Screen Replacement", price = 8500.0),
+                      Product(name = "Battery Replacement", price = 4500.0),
+                      Product(name = "Charging Port Fix", price = 2500.0),
+                      Product(name = "General Diagnostic", price = 1500.0),
+                      Product(name = "Tempered Glass", price = 800.0),
+                      Product(name = "Fast Charger Cable", price = 1200.0)
+                  ).also { saveProducts(context, it) }
+                  return Gson().fromJson(json, object : TypeToken<List<Product>>() {}.type)
+              }
+              fun saveProducts(context: Context, products: List<Product>) {
+                  context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                      .edit().putString(KEY_PRODUCTS, Gson().toJson(products)).apply()
+              }
+          }
+
+          object ExcelManager {
+              private const val EXCEL_PASSWORD = "pubudu12345"
+              private const val FILE_NAME = "RepairShop_Sales.xlsx"
+              fun logSaleToEncryptedExcel(context: Context, invoiceId: String, customerInfo: String, cart: List<CartItem>, totalAmount: Double): String {
+                  val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                  if (!docsDir.exists()) docsDir.mkdirs()
+                  val excelFile = File(docsDir, FILE_NAME)
+                  val workbook: XSSFWorkbook = if (excelFile.exists()) {
+                      FileInputStream(excelFile).use { fis ->
+                          POIFSFileSystem(fis).use { poifs ->
+                              val info = EncryptionInfo(poifs)
+                              val decryptor = info.decryptor
+                              if (!decryptor.verifyPassword(EXCEL_PASSWORD)) throw Exception("Password mismatch!")
+                              decryptor.getDataStream(poifs).use { WorkbookFactory.create(it) as XSSFWorkbook }
+                          }
+                      }
+                  } else {
+                      XSSFWorkbook().apply {
+                          val sheet = createSheet("Sales_Log")
+                          val h = sheet.createRow(0)
+                          h.createCell(0).setCellValue("Invoice ID")
+                          h.createCell(1).setCellValue("Date & Time")
+                          h.createCell(2).setCellValue("Customer / Job Note")
+                          h.createCell(3).setCellValue("Items / Services")
+                          h.createCell(4).setCellValue("Total Price")
+                      }
+                  }
+                  val sheet = workbook.getSheetAt(0)
+                  val row = sheet.createRow(sheet.lastRowNum + 1)
+                  val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+                  val itemsSummary = cart.joinToString(", ") { "${it.product.name} (x${it.quantity})" }
+                  row.createCell(0).setCellValue(invoiceId)
+                  row.createCell(1).setCellValue(timestamp)
+                  row.createCell(2).setCellValue(if (customerInfo.isBlank()) "Walk-in" else customerInfo)
+                  row.createCell(3).setCellValue(itemsSummary)
+                  row.createCell(4).setCellValue(totalAmount)
+
+                  POIFSFileSystem().use { fs ->
+                      val info = EncryptionInfo(EncryptionMode.agile)
+                      val encryptor = info.encryptor
+                      encryptor.confirmPassword(EXCEL_PASSWORD)
+                      encryptor.getDataStream(fs).use { workbook.write(it) }
+                      workbook.close()
+                      FileOutputStream(excelFile).use { fs.writeFilesystem(it) }
+                  }
+                  return excelFile.absolutePath
+              }
+          }
+
+          object BluetoothPrinterHelper {
+              private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+              @SuppressLint("MissingPermission")
+              fun getPairedPrinters(context: Context): List<BluetoothDevice> {
+                  val btManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                  return btManager.adapter?.bondedDevices?.toList() ?: emptyList()
+              }
+              @SuppressLint("MissingPermission")
+              fun printReceipt(device: BluetoothDevice, invoiceId: String, customerInfo: String, cart: List<CartItem>, total: Double) {
+                  val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                  socket.connect()
+                  val out: OutputStream = socket.outputStream
+                  val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+                  out.write(byteArrayOf(0x1B, 0x40, 0x1B, 0x61, 0x01, 0x1B, 0x45, 0x01))
+                  out.write("REPAIR SHOP RECEIPT\n".toByteArray())
+                  out.write(byteArrayOf(0x1B, 0x45, 0x00))
+                  out.write("--------------------------------\n".toByteArray())
+                  out.write(byteArrayOf(0x1B, 0x61, 0x00))
+                  val sb = StringBuilder("Invoice : $invoiceId\nDate    : $dateStr\n")
+                  if (customerInfo.isNotBlank()) sb.append("Customer: $customerInfo\n")
+                  sb.append("--------------------------------\n")
+                  for (item in cart) {
+                      val lineTotal = item.product.price * item.quantity
+                      sb.append("${item.product.name}\n  ${item.quantity} x ${"%.2f".format(item.product.price)} = ${"%.2f".format(lineTotal)}\n")
+                  }
+                  sb.append("--------------------------------\n")
+                  out.write(sb.toString().toByteArray())
+                  out.write(byteArrayOf(0x1B, 0x61, 0x02, 0x1B, 0x45, 0x01))
+                  out.write("TOTAL: Rs. ${"%.2f".format(total)}\n".toByteArray())
+                  out.write(byteArrayOf(0x1B, 0x45, 0x00, 0x1B, 0x61, 0x01))
+                  out.write("\nThank you for your business!\n\n\n\n".toByteArray())
+                  out.flush()
+                  Thread.sleep(600)
+                  socket.close()
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun RepairPOSApp() {
+              val context = LocalContext.current
+              val scope = rememberCoroutineScope()
+              var selectedTab by remember { mutableIntStateOf(0) }
+              var products by remember { mutableStateOf(ProductRepository.loadProducts(context)) }
+              var cart by remember { mutableStateOf(listOf<CartItem>()) }
+              var searchQuery by remember { mutableStateOf("") }
+              var customerNote by remember { mutableStateOf("") }
+              var pairedDevices by remember { mutableStateOf(listOf<BluetoothDevice>()) }
+              var selectedPrinter by remember { mutableStateOf<BluetoothDevice?>(null) }
+              var showPrinterDialog by remember { mutableStateOf(false) }
+              var isProcessingSale by remember { mutableStateOf(false) }
+
+              val btPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+                  pairedDevices = BluetoothPrinterHelper.getPairedPrinters(context)
+                  showPrinterDialog = true
+              }
+
+              fun openPrinterDialog() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                      ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                      btPermissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN))
+                      return
+                  }
+                  pairedDevices = BluetoothPrinterHelper.getPairedPrinters(context)
+                  showPrinterDialog = true
+              }
+
+              Scaffold(
+                  topBar = {
+                      TopAppBar(
+                          title = { Text("Repair Shop POS", fontWeight = FontWeight.Bold) },
+                          colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primary, titleContentColor = Color.White),
+                          actions = {
+                              @SuppressLint("MissingPermission")
+                              val printerLabel = selectedPrinter?.name ?: "Select Printer"
+                              TextButton(onClick = { openPrinterDialog() }) {
+                                  Icon(Icons.Default.Print, contentDescription = null, tint = Color.White)
+                                  Spacer(Modifier.width(6.dp))
+                                  Text(printerLabel, color = Color.White)
+                              }
+                          }
+                      )
+                  },
+                  bottomBar = {
+                      NavigationBar {
+                          NavigationBarItem(selected = selectedTab == 0, onClick = { selectedTab = 0 }, icon = { Icon(Icons.Default.PointOfSale, null) }, label = { Text("POS Checkout") })
+                          NavigationBarItem(selected = selectedTab == 1, onClick = { selectedTab = 1 }, icon = { Icon(Icons.Default.Inventory, null) }, label = { Text("Manage Products") })
+                      }
+                  }
+              ) { padding ->
+                  Box(Modifier.padding(padding).fillMaxSize()) {
+                      if (selectedTab == 0) {
+                          val filtered = products.filter { it.name.contains(searchQuery, true) }
+                          val totalAmount = cart.sumOf { it.product.price * it.quantity }
+                          Column(Modifier.fillMaxSize().padding(12.dp)) {
+                              OutlinedTextField(value = searchQuery, onValueChange = { searchQuery = it }, placeholder = { Text("Search repair or part...") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                              Spacer(Modifier.height(8.dp))
+                              LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                  items(filtered) { product ->
+                                      Card(shape = RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(2.dp), modifier = Modifier.fillMaxWidth().clickable {
+                                          val existing = cart.find { it.product.id == product.id }
+                                          cart = if (existing != null) cart.map { if (it.product.id == product.id) it.copy(quantity = it.quantity + 1) else it } else cart + CartItem(product, 1)
+                                      }) {
+                                          Column(Modifier.padding(12.dp)) {
+                                              Text(product.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2)
+                                              Spacer(Modifier.height(6.dp))
+                                              Text("Rs. ${"%.2f".format(product.price)}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                                          }
+                                      }
+                                  }
+                              }
+                              Spacer(Modifier.height(8.dp))
+                              Card(shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(4.dp), modifier = Modifier.fillMaxWidth()) {
+                                  Column(Modifier.padding(12.dp)) {
+                                      Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                                          Text("Current Sale (${cart.sumOf { it.quantity }} items)", fontWeight = FontWeight.Bold)
+                                          if (cart.isNotEmpty()) TextButton(onClick = { cart = emptyList(); customerNote = "" }) { Text("Clear", color = Color.Red) }
+                                      }
+                                      OutlinedTextField(value = customerNote, onValueChange = { customerNote = it }, placeholder = { Text("Customer / Device Model (Optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
+                                      LazyColumn(Modifier.heightIn(max = 120.dp)) {
+                                          items(cart) { item ->
+                                              Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                                                  Column(Modifier.weight(1f)) {
+                                                      Text(item.product.name, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                                                      Text("${"%.2f".format(item.product.price)} x ${item.quantity}", fontSize = 12.sp, color = Color.Gray)
+                                                  }
+                                                  Row(verticalAlignment = Alignment.CenterVertically) {
+                                                      IconButton(onClick = {
+                                                          val q = item.quantity - 1
+                                                          cart = if (q <= 0) cart.filterNot { it.product.id == item.product.id } else cart.map { if (it.product.id == item.product.id) it.copy(quantity = q) else it }
+                                                      }) { Icon(Icons.Default.RemoveCircleOutline, null) }
+                                                      Text("${item.quantity}", fontWeight = FontWeight.Bold)
+                                                      IconButton(onClick = {
+                                                          cart = cart.map { if (it.product.id == item.product.id) it.copy(quantity = item.quantity + 1) else it }
+                                                      }) { Icon(Icons.Default.AddCircleOutline, null) }
+                                                  }
+                                              }
+                                          }
+                                      }
+                                      HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                                      Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                                          Column {
+                                              Text("Total Payable", fontSize = 12.sp, color = Color.Gray)
+                                              Text("Rs. ${"%.2f".format(totalAmount)}", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                                          }
+                                          Button(onClick = {
+                                              if (cart.isEmpty()) return@Button
+                                              isProcessingSale = true
+                                              val invId = "INV-" + (10000..99999).random()
+                                              scope.launch {
+                                                  var msg = ""
+                                                  try {
+                                                      val path = withContext(Dispatchers.IO) { ExcelManager.logSaleToEncryptedExcel(context, invId, customerNote, cart, totalAmount) }
+                                                      msg = "Excel Encrypted & Saved ($path)"
+                                                  } catch (e: Exception) { msg = "Excel Err: ${e.localizedMessage}" }
+                                                  selectedPrinter?.let { printer ->
+                                                      try {
+                                                          withContext(Dispatchers.IO) { BluetoothPrinterHelper.printReceipt(printer, invId, customerNote, cart, totalAmount) }
+                                                          msg += " + Printed!"
+                                                      } catch (e: Exception) { msg += " (Print failed)" }
+                                                  }
+                                                  isProcessingSale = false
+                                                  cart = emptyList()
+                                                  customerNote = ""
+                                                  Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                              }
+                                          }, enabled = cart.isNotEmpty() && !isProcessingSale) {
+                                              Text(if (isProcessingSale) "Saving..." else "Confirm & Print", fontWeight = FontWeight.Bold)
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                      } else {
+                          var nameIn by remember { mutableStateOf("") }
+                          var priceIn by remember { mutableStateOf("") }
+                          Column(Modifier.fillMaxSize().padding(16.dp)) {
+                              Card(colors = CardDefaults.cardColors(containerColor = Color.White), modifier = Modifier.fillMaxWidth()) {
+                                  Column(Modifier.padding(16.dp)) {
+                                      Text("Add New Service / Product", fontWeight = FontWeight.Bold)
+                                      Spacer(Modifier.height(8.dp))
+                                      OutlinedTextField(value = nameIn, onValueChange = { nameIn = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                      Spacer(Modifier.height(8.dp))
+                                      OutlinedTextField(value = priceIn, onValueChange = { priceIn = it }, label = { Text("Price") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
+                                      Spacer(Modifier.height(10.dp))
+                                      Button(onClick = {
+                                          val p = priceIn.toDoubleOrNull()
+                                          if (nameIn.isNotBlank() && p != null) {
+                                              products = products + Product(name = nameIn.trim(), price = p)
+                                              ProductRepository.saveProducts(context, products)
+                                              nameIn = ""; priceIn = ""
+                                          }
+                                      }, modifier = Modifier.align(Alignment.End)) { Text("Save Item") }
+                                  }
+                              }
+                              Spacer(Modifier.height(16.dp))
+                              LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                  items(products) { prod ->
+                                      Card(colors = CardDefaults.cardColors(containerColor = Color.White), modifier = Modifier.fillMaxWidth()) {
+                                          Row(Modifier.fillMaxWidth().padding(14.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                                              Column(Modifier.weight(1f)) {
+                                                  Text(prod.name, fontWeight = FontWeight.SemiBold)
+                                                  Text("Rs. ${"%.2f".format(prod.price)}", color = Color.Gray)
+                                              }
+                                              IconButton(onClick = {
+                                                  products = products.filterNot { it.id == prod.id }
+                                                  ProductRepository.saveProducts(context, products)
+                                              }) { Icon(Icons.Default.Delete, null, tint = Color.Red) }
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  }
+                  if (showPrinterDialog) {
+                      AlertDialog(
+                          onDismissRequest = { showPrinterDialog = false },
+                          title = { Text("Select Paired Printer") },
+                          text = {
+                              if (pairedDevices.isEmpty()) Text("No paired Bluetooth printers found. Pair your printer in Android Settings first.")
+                              else LazyColumn {
+                                  items(pairedDevices) { dev ->
+                                      @SuppressLint("MissingPermission")
+                                      val n = dev.name ?: "Unknown"
+                                      ListItem(headlineContent = { Text(n) }, supportingContent = { Text(dev.address) }, modifier = Modifier.clickable { selectedPrinter = dev; showPrinterDialog = false })
+                                  }
+                              }
+                          },
+                          confirmButton = { TextButton(onClick = { showPrinterDialog = false }) { Text("Close") } }
+                      )
+                  }
+              }
+          }
+          EOF
+
+      - name: Compile Android APK with Gradle
+        uses: gradle/actions/setup-gradle@v3
+      - run: gradle assembleDebug
+
+      - name: Upload Ready-to-Install APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RepairShopPOS-Installable-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
